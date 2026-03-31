@@ -1,9 +1,20 @@
 """Minesweeper game engine.
 
-Provides the core board representation, cell states, and game logic including:
-- First-click safety (first reveal is never a mine)
-- Flood-fill reveal for zero-adjacency cells
-- Win / loss detection
+PASO 1 — Motor del juego
+========================
+Aquí debes implementar la lógica central del buscaminas:
+
+  1a. Representación del tablero y estados de las celdas.
+  1b. Colocación de minas DESPUÉS del primer click (seguridad garantizada).
+  1c. Cálculo de adyacencias (cuántas minas rodean cada celda).
+  1d. Revelar una celda:
+        - Si es mina → LOST.
+        - Si tiene 0 minas adyacentes → flood-fill (revelar cascada).
+        - Si tiene N minas adyacentes → mostrar el número.
+  1e. Marcar/desmarcar celdas con bandera.
+  1f. Chord-click: si una celda número ya tiene todas sus banderas colocadas,
+      revelar automáticamente todos sus vecinos ocultos restantes.
+  1g. Detectar condición de victoria (todas las celdas seguras reveladas).
 """
 
 import random
@@ -11,6 +22,10 @@ import time
 from enum import Enum
 from typing import Generator, NamedTuple, Optional, Tuple
 
+
+# ---------------------------------------------------------------------------
+# Enums y tipos de datos — ya definidos, no necesitas cambiarlos
+# ---------------------------------------------------------------------------
 
 class CellState(Enum):
     HIDDEN = "hidden"
@@ -48,6 +63,7 @@ class Difficulty(NamedTuple):
 
 
 class Cell:
+    """Una celda del tablero."""
     __slots__ = ("is_mine", "state", "adjacent_mines")
 
     def __init__(self) -> None:
@@ -56,15 +72,19 @@ class Cell:
         self.adjacent_mines: int = 0
 
 
-class Minesweeper:
-    """Minesweeper game engine.
+# ---------------------------------------------------------------------------
+# Motor principal — AQUÍ empieza tu trabajo
+# ---------------------------------------------------------------------------
 
-    Usage::
+class Minesweeper:
+    """Motor del juego Minesweeper.
+
+    Ejemplo de uso::
 
         game = Minesweeper(Difficulty.expert())
-        game.reveal(7, 14)   # first click — mines are placed after this
+        game.reveal(7, 14)   # primer click — minas se colocan después de esto
         if game.game_state == GameState.WON:
-            print("Won in", game.elapsed_time, "seconds")
+            print("Ganado en", game.elapsed_time, "segundos")
     """
 
     def __init__(self, difficulty: Difficulty) -> None:
@@ -73,192 +93,162 @@ class Minesweeper:
         self.num_mines = difficulty.mines
         self.difficulty = difficulty
 
+        # TODO 1a: Crear el tablero 2D de celdas (lista de listas de Cell)
         self.board: list[list[Cell]] = [
             [Cell() for _ in range(self.cols)] for _ in range(self.rows)
         ]
+
         self.game_state: GameState = GameState.ONGOING
-        self._initialized: bool = False
+        self._initialized: bool = False          # se vuelve True tras el 1er click
         self._start_time: Optional[float] = None
         self._end_time: Optional[float] = None
 
-        # Statistics
+        # Contadores de estadísticas
         self.reveal_count: int = 0
         self.flag_count: int = 0
         self.guess_count: int = 0
 
     # ------------------------------------------------------------------
-    # Board helpers
+    # PASO 1a — Vecinos
     # ------------------------------------------------------------------
 
     def neighbors(self, row: int, col: int) -> Generator[Tuple[int, int], None, None]:
-        """Yield valid (row, col) pairs for all 8 neighbours."""
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                if dr == 0 and dc == 0:
-                    continue
-                r, c = row + dr, col + dc
-                if 0 <= r < self.rows and 0 <= c < self.cols:
-                    yield r, c
+        """Devuelve los (row, col) válidos de los 8 vecinos de una celda.
+
+        TODO 1a: Itera los desplazamientos (-1, 0, 1) × (-1, 0, 1),
+                 salta el (0, 0) propio, y devuelve solo los que estén
+                 dentro de los límites del tablero.
+        """
+        raise NotImplementedError("TODO 1a: implementa neighbors()")
 
     # ------------------------------------------------------------------
-    # Initialisation (deferred until first click for safety guarantee)
+    # PASO 1b — Colocación de minas (diferida al 1er click)
     # ------------------------------------------------------------------
 
     def _place_mines(self, safe_row: int, safe_col: int) -> None:
-        """Place mines randomly, keeping a 3×3 area around the first click safe."""
-        safe: set[Tuple[int, int]] = {(safe_row, safe_col)}
-        safe.update(self.neighbors(safe_row, safe_col))
+        """Coloca minas aleatoriamente, manteniendo segura la zona 3×3 del 1er click.
 
-        candidates = [
-            (r, c)
-            for r in range(self.rows)
-            for c in range(self.cols)
-            if (r, c) not in safe
-        ]
-
-        count = min(self.num_mines, len(candidates))
-        for r, c in random.sample(candidates, count):
-            self.board[r][c].is_mine = True
-
-        # Compute adjacency counts
-        for r in range(self.rows):
-            for c in range(self.cols):
-                if not self.board[r][c].is_mine:
-                    self.board[r][c].adjacent_mines = sum(
-                        1 for nr, nc in self.neighbors(r, c) if self.board[nr][nc].is_mine
-                    )
-
-        self._initialized = True
+        TODO 1b:
+          1. Crea el conjunto 'safe' con (safe_row, safe_col) y todos sus vecinos.
+          2. Recoge todos los (r, c) del tablero que NO estén en 'safe'.
+          3. Elige aleatoriamente `self.num_mines` de esos candidatos
+             (usa random.sample) y márcalos como mina.
+          4. Recorre todo el tablero y calcula adjacent_mines para cada
+             celda no-mina (cuenta cuántas de sus vecinas son minas).
+          5. Pon self._initialized = True.
+        """
+        raise NotImplementedError("TODO 1b: implementa _place_mines()")
 
     # ------------------------------------------------------------------
-    # Actions
+    # PASO 1c/1d — Revelar
     # ------------------------------------------------------------------
 
     def reveal(self, row: int, col: int, *, is_guess: bool = False) -> bool:
-        """Reveal a cell.  Returns *True* if the cell was newly revealed safely.
+        """Revela la celda (row, col). Devuelve True si la celda fue revelada.
 
-        Triggers mine placement on the first call (ensuring first click is safe).
-        Performs flood-fill for zero-adjacency cells.
+        TODO 1c:
+          1. Si el juego no está ONGOING, devuelve False.
+          2. Si la celda no está HIDDEN (ya revelada o con bandera), devuelve False.
+          3. Si es el primer click (not self._initialized):
+               - Guarda self._start_time = time.perf_counter()
+               - Llama a self._place_mines(row, col)
+          4. Si is_guess, incrementa self.guess_count.
+          5. Llama a self._reveal_cell(row, col).
+          6. Devuelve True.
         """
-        if self.game_state != GameState.ONGOING:
-            return False
-
-        cell = self.board[row][col]
-        if cell.state != CellState.HIDDEN:
-            return False
-
-        if not self._initialized:
-            self._start_time = time.perf_counter()
-            self._place_mines(row, col)
-
-        if is_guess:
-            self.guess_count += 1
-
-        self._reveal_cell(row, col)
-        return True
+        raise NotImplementedError("TODO 1c: implementa reveal()")
 
     def _reveal_cell(self, row: int, col: int) -> None:
-        """Internal recursive reveal with flood-fill."""
-        cell = self.board[row][col]
-        if cell.state != CellState.HIDDEN:
-            return
+        """Reveal interno con flood-fill recursivo.
 
-        cell.state = CellState.REVEALED
-        self.reveal_count += 1
-
-        if cell.is_mine:
-            self.game_state = GameState.LOST
-            self._end_time = time.perf_counter()
-            return
-
-        if cell.adjacent_mines == 0:
-            for nr, nc in self.neighbors(row, col):
-                if self.board[nr][nc].state == CellState.HIDDEN:
-                    self._reveal_cell(nr, nc)
-
-        self._check_win()
-
-    def flag(self, row: int, col: int) -> bool:
-        """Toggle a flag on a hidden cell.  Returns *True* on success."""
-        if self.game_state != GameState.ONGOING:
-            return False
-        cell = self.board[row][col]
-        if cell.state == CellState.HIDDEN:
-            cell.state = CellState.FLAGGED
-            self.flag_count += 1
-            return True
-        if cell.state == CellState.FLAGGED:
-            cell.state = CellState.HIDDEN
-            self.flag_count -= 1
-            return True
-        return False
-
-    def chord(self, row: int, col: int) -> bool:
-        """Chord-click: reveal all hidden neighbours of a satisfied number cell.
-
-        A cell is satisfied when its flagged-neighbour count equals its number.
-        Returns *True* if any new reveals happened.
+        TODO 1d:
+          1. Si la celda no está HIDDEN, termina.
+          2. Cambia su estado a REVEALED e incrementa self.reveal_count.
+          3. Si es mina:
+               - Cambia game_state a LOST.
+               - Guarda self._end_time = time.perf_counter().
+               - Termina.
+          4. Si adjacent_mines == 0 (celda vacía), llama recursivamente a
+             _reveal_cell() en todos los vecinos HIDDEN (flood-fill).
+          5. Llama a self._check_win().
         """
-        if self.game_state != GameState.ONGOING:
-            return False
-        cell = self.board[row][col]
-        if cell.state != CellState.REVEALED or cell.adjacent_mines == 0:
-            return False
-
-        flagged = sum(
-            1 for nr, nc in self.neighbors(row, col)
-            if self.board[nr][nc].state == CellState.FLAGGED
-        )
-        if flagged != cell.adjacent_mines:
-            return False
-
-        revealed_any = False
-        for nr, nc in self.neighbors(row, col):
-            if self.board[nr][nc].state == CellState.HIDDEN:
-                self._reveal_cell(nr, nc)
-                revealed_any = True
-        return revealed_any
+        raise NotImplementedError("TODO 1d: implementa _reveal_cell()")
 
     # ------------------------------------------------------------------
-    # State queries
+    # PASO 1e — Banderas
+    # ------------------------------------------------------------------
+
+    def flag(self, row: int, col: int) -> bool:
+        """Alterna bandera en una celda oculta. Devuelve True si tuvo efecto.
+
+        TODO 1e:
+          1. Si el juego no está ONGOING, devuelve False.
+          2. Si está HIDDEN → ponla en FLAGGED, incrementa flag_count, devuelve True.
+          3. Si está FLAGGED → ponla en HIDDEN, decrementa flag_count, devuelve True.
+          4. En cualquier otro caso devuelve False.
+        """
+        raise NotImplementedError("TODO 1e: implementa flag()")
+
+    # ------------------------------------------------------------------
+    # PASO 1f — Chord
+    # ------------------------------------------------------------------
+
+    def chord(self, row: int, col: int) -> bool:
+        """Chord-click: revela vecinos ocultos de una celda número ya satisfecha.
+
+        Una celda está satisfecha cuando el número de banderas vecinas es igual
+        a su valor de adjacent_mines.
+
+        TODO 1f:
+          1. Si el juego no está ONGOING, devuelve False.
+          2. Si la celda no está REVEALED o es 0, devuelve False.
+          3. Cuenta las banderas vecinas.
+          4. Si la cuenta no iguala adjacent_mines, devuelve False.
+          5. Llama a _reveal_cell() en cada vecino HIDDEN.
+          6. Devuelve True si se reveló al menos uno.
+        """
+        raise NotImplementedError("TODO 1f: implementa chord()")
+
+    # ------------------------------------------------------------------
+    # PASO 1g — Victoria
     # ------------------------------------------------------------------
 
     def _check_win(self) -> None:
-        if self.game_state != GameState.ONGOING:
-            return
-        for r in range(self.rows):
-            for c in range(self.cols):
-                cell = self.board[r][c]
-                if not cell.is_mine and cell.state != CellState.REVEALED:
-                    return
-        self.game_state = GameState.WON
-        self._end_time = time.perf_counter()
+        """Comprueba si todas las celdas seguras han sido reveladas.
+
+        TODO 1g:
+          1. Si game_state no es ONGOING, termina.
+          2. Recorre el tablero; si alguna celda no-mina no está REVEALED, termina.
+          3. Si el bucle completa sin encontrar ninguna → WON.
+             Guarda self._end_time = time.perf_counter().
+        """
+        raise NotImplementedError("TODO 1g: implementa _check_win()")
+
+    # ------------------------------------------------------------------
+    # Propiedades de consulta — implementa estas también
+    # ------------------------------------------------------------------
 
     @property
     def elapsed_time(self) -> float:
-        """Elapsed wall-clock time in seconds (0 before first reveal)."""
-        if self._start_time is None:
-            return 0.0
-        end = self._end_time if self._end_time is not None else time.perf_counter()
-        return end - self._start_time
+        """Tiempo transcurrido en segundos (0.0 antes del primer reveal).
+
+        TODO: devuelve el tiempo entre _start_time y _end_time (o ahora si
+              la partida sigue en curso). Si _start_time es None, devuelve 0.0.
+        """
+        raise NotImplementedError("TODO: implementa elapsed_time")
 
     @property
     def remaining_mines(self) -> int:
-        """Mine counter: total mines minus flags placed."""
-        flagged = sum(
-            1
-            for r in range(self.rows)
-            for c in range(self.cols)
-            if self.board[r][c].state == CellState.FLAGGED
-        )
-        return self.num_mines - flagged
+        """Contador de minas: total menos banderas colocadas.
+
+        TODO: cuenta las celdas con estado FLAGGED y réstaselas a num_mines.
+        """
+        raise NotImplementedError("TODO: implementa remaining_mines")
 
     @property
     def hidden_count(self) -> int:
-        """Number of still-hidden (unrevealed, unflagged) cells."""
-        return sum(
-            1
-            for r in range(self.rows)
-            for c in range(self.cols)
-            if self.board[r][c].state == CellState.HIDDEN
-        )
+        """Número de celdas todavía ocultas (ni reveladas ni con bandera).
+
+        TODO: cuenta las celdas con estado HIDDEN.
+        """
+        raise NotImplementedError("TODO: implementa hidden_count")

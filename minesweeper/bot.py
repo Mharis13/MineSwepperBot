@@ -1,4 +1,14 @@
-"""Bot orchestration — runs the solver in a loop and collects statistics."""
+"""Bot orchestration — runs the solver in a loop and collects statistics.
+
+PASO 3 — Bot y estadísticas
+============================
+Con el motor (Paso 1) y el solucionador (Paso 2) listos, este módulo los une:
+
+  3a. GameResult: almacena el resultado de una sola partida.
+  3b. Statistics: agrega resultados de múltiples partidas.
+  3c. Bot.run_once(): juega una partida completa con el solver en bucle.
+  3d. Bot.run_batch(): juega N partidas y devuelve estadísticas globales.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +20,25 @@ from .game import Difficulty, GameState, Minesweeper
 from .solver import Solver
 
 
+# ---------------------------------------------------------------------------
+# PASO 3a — Resultado de una partida
+# ---------------------------------------------------------------------------
+
 @dataclass
 class GameResult:
-    """Result of a single game run."""
+    """Resultado de una sola partida.
 
+    TODO 3a: Almacena los campos necesarios:
+      - won: bool          → si el bot ganó
+      - elapsed: float     → tiempo en segundos
+      - reveal_count: int  → total de celdas reveladas
+      - flag_count: int    → total de banderas colocadas
+      - guess_count: int   → cuántos movimientos fueron adivinanzas
+      - difficulty: Difficulty
+
+    Añade también una propiedad 'efficiency' que devuelva la fracción de
+    reveals que fueron deterministas: max(0, 1 − guess_count / reveal_count).
+    """
     won: bool
     elapsed: float
     reveal_count: int
@@ -23,15 +48,29 @@ class GameResult:
 
     @property
     def efficiency(self) -> float:
-        """Fraction of reveals that were deterministic (no guess needed)."""
-        if self.reveal_count == 0:
-            return 0.0
-        return max(0.0, 1.0 - self.guess_count / self.reveal_count)
+        """Fracción de reveals que fueron deterministas.
 
+        TODO 3a: implementa efficiency.
+        """
+        raise NotImplementedError("TODO 3a: implementa efficiency")
+
+
+# ---------------------------------------------------------------------------
+# PASO 3b — Estadísticas agregadas
+# ---------------------------------------------------------------------------
 
 @dataclass
 class Statistics:
-    """Aggregated statistics across multiple games."""
+    """Estadísticas de múltiples partidas.
+
+    TODO 3b: Implementa las propiedades y el método summary():
+      - total, wins, losses  → contadores básicos
+      - win_rate             → wins / total
+      - avg_time             → media de elapsed
+      - best_time            → mínimo de elapsed entre las victorias
+      - avg_efficiency       → media de efficiency
+      - summary()            → cadena de texto con un resumen legible
+    """
 
     results: List[GameResult] = field(default_factory=list)
 
@@ -40,59 +79,50 @@ class Statistics:
 
     @property
     def total(self) -> int:
-        return len(self.results)
+        raise NotImplementedError("TODO 3b: implementa total")
 
     @property
     def wins(self) -> int:
-        return sum(1 for r in self.results if r.won)
+        raise NotImplementedError("TODO 3b: implementa wins")
 
     @property
     def losses(self) -> int:
-        return self.total - self.wins
+        raise NotImplementedError("TODO 3b: implementa losses")
 
     @property
     def win_rate(self) -> float:
-        return self.wins / self.total if self.total else 0.0
+        raise NotImplementedError("TODO 3b: implementa win_rate")
 
     @property
     def avg_time(self) -> float:
-        if not self.results:
-            return 0.0
-        return sum(r.elapsed for r in self.results) / self.total
+        raise NotImplementedError("TODO 3b: implementa avg_time")
 
     @property
     def best_time(self) -> float:
-        wins = [r.elapsed for r in self.results if r.won]
-        return min(wins) if wins else 0.0
+        raise NotImplementedError("TODO 3b: implementa best_time")
 
     @property
     def avg_efficiency(self) -> float:
-        if not self.results:
-            return 0.0
-        return sum(r.efficiency for r in self.results) / self.total
+        raise NotImplementedError("TODO 3b: implementa avg_efficiency")
 
     def summary(self) -> str:
-        lines = [
-            f"Games played : {self.total}",
-            f"Wins         : {self.wins}  ({self.win_rate * 100:.1f} %)",
-            f"Losses       : {self.losses}",
-            f"Avg time     : {self.avg_time * 1000:.1f} ms",
-            f"Best time    : {self.best_time * 1000:.1f} ms",
-            f"Avg efficiency: {self.avg_efficiency * 100:.1f} %",
-        ]
-        return "\n".join(lines)
+        raise NotImplementedError("TODO 3b: implementa summary()")
 
+
+# ---------------------------------------------------------------------------
+# PASO 3c/3d — Bot
+# ---------------------------------------------------------------------------
 
 class Bot:
-    """TAS-style Minesweeper bot.
+    """Bot de Minesweeper estilo TAS.
 
-    Runs the solver as fast as possible and records game statistics.
+    Ejecuta el solver lo más rápido posible y registra estadísticas.
 
-    Usage::
+    Ejemplo de uso::
 
         bot = Bot(Difficulty.expert())
-        result = bot.run_once(verbose=True)      # single game
-        stats = bot.run_batch(100, verbose=False)  # 100 games
+        result = bot.run_once(verbose=True)       # una partida
+        stats = bot.run_batch(100)                # 100 partidas
         print(stats.summary())
     """
 
@@ -105,52 +135,19 @@ class Bot:
         verbose: bool = False,
         display: bool = False,
     ) -> GameResult:
-        """Play a single game and return the result."""
-        from .display import render  # avoid circular import at module level
+        """Juega una sola partida y devuelve el resultado.
 
-        game = Minesweeper(self.difficulty)
-        solver = Solver(game)
-
-        if verbose:
-            print(f"\n{'=' * 50}")
-            print(f"  {self.difficulty.name} — {self.difficulty.rows}×{self.difficulty.cols}"
-                  f", {self.difficulty.mines} mines")
-            print(f"{'=' * 50}")
-
-        while game.game_state == GameState.ONGOING:
-            action, row, col, is_guess = solver.next_move()
-
-            if display:
-                print(render(game))
-
-            if verbose:
-                marker = " [GUESS]" if is_guess else ""
-                print(f"  {action.upper():6s}  ({row:2d},{col:2d}){marker}")
-
-            if action == "flag":
-                game.flag(row, col)
-            else:
-                game.reveal(row, col, is_guess=is_guess)
-
-        if display:
-            print(render(game))
-
-        result = GameResult(
-            won=game.game_state == GameState.WON,
-            elapsed=game.elapsed_time,
-            reveal_count=game.reveal_count,
-            flag_count=game.flag_count,
-            guess_count=game.guess_count,
-            difficulty=self.difficulty,
-        )
-
-        if verbose:
-            status = "WON  ✓" if result.won else "LOST ✗"
-            print(f"\n  Result     : {status}")
-            print(f"  Time       : {result.elapsed * 1000:.1f} ms")
-            print(f"  Efficiency : {result.efficiency * 100:.1f} %")
-
-        return result
+        TODO 3c:
+          1. Crea Minesweeper(self.difficulty) y Solver(game).
+          2. Mientras game.game_state == ONGOING:
+               a. Obtén la jugada del solver: action, row, col, is_guess.
+               b. Si display, renderiza el tablero (importa display.render).
+               c. Si verbose, imprime la jugada.
+               d. Ejecuta game.flag() o game.reveal() según la acción.
+          3. Si display, renderiza el estado final.
+          4. Construye y devuelve un GameResult con los datos de la partida.
+        """
+        raise NotImplementedError("TODO 3c: implementa run_once()")
 
     def run_batch(
         self,
@@ -159,31 +156,13 @@ class Bot:
         verbose: bool = False,
         progress: bool = True,
     ) -> Statistics:
-        """Play *n* games and return aggregated statistics.
+        """Juega n partidas y devuelve estadísticas agregadas.
 
-        Parameters
-        ----------
-        n:
-            Number of games to play.
-        verbose:
-            Print details for every game.
-        progress:
-            Print a progress bar / running tally every 10 games.
+        TODO 3d:
+          1. Crea un objeto Statistics().
+          2. Para i en 1..n:
+               a. Llama a run_once() y añade el resultado a stats.
+               b. Si progress, imprime cada 10 % (o cada partida) el avance.
+          3. Devuelve stats.
         """
-        stats = Statistics()
-        start = time.perf_counter()
-
-        for i in range(1, n + 1):
-            result = self.run_once(verbose=verbose)
-            stats.add(result)
-
-            if progress and (i % max(1, n // 10) == 0 or i == n):
-                elapsed_total = time.perf_counter() - start
-                rate = i / elapsed_total if elapsed_total > 0 else 0
-                print(
-                    f"  [{i:>{len(str(n))}}/{n}]  "
-                    f"win-rate={stats.win_rate * 100:5.1f}%  "
-                    f"speed={rate:.0f} games/s"
-                )
-
-        return stats
+        raise NotImplementedError("TODO 3d: implementa run_batch()")
